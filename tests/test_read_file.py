@@ -4,6 +4,7 @@ from droplet.agent import DropletAgent
 from droplet import dbg_tools
 from droplet.main import build_agent_config
 from droplet.rich_terminal import droplet_print
+
 def test_read_file():
     # Build config from CLI args and saved configs, then override for test
     config, _, _, _, _ = build_agent_config()
@@ -11,9 +12,10 @@ def test_read_file():
         print("Special flag handled, exiting test")
         return
 
-# Activate debugger if --debug flag was passed
-if config.get('debug'):
-    dbg_tools.pm_breakpoint()
+    # Activate debugger if --debug flag was passed
+    if config.get('debug'):
+        dbg_tools.pm_breakpoint()
+
     # Override specific test parameters
     config['debug'] = True
     with DropletAgent(**config) as agent:
@@ -27,5 +29,6 @@ if config.get('debug'):
         droplet_print(f"\n{final_answer}\n")
         assert len(final_answer) > 0
         print("✓ Test passed: Model provided a file summary")
+
 if __name__ == "__main__":
     test_read_file()

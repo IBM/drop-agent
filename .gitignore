@@ -5,3 +5,6 @@ __pycache__
 drop-scenarios
 # 
 .env
+#
+GPT-OSS-BrowseCompPlus-Eval/
+drop-agent.wiki/
