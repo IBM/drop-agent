@@ -1,0 +1,7 @@
+*.swp
+droplet.egg-info/
+*/__pycache__
+__pycache__
+drop-scenarios
+# 
+.env

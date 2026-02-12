@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "droplet"
+version = "0.1.2"
+description = "DROP: Deep Research On Premise Agent"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "ollama",
+    "openai",
+    "requests",
+    "pypdf",
+    "openpyxl",
+    "tiktoken",
+    "prompt_toolkit",
+    "gpt-oss",
+    "wikipedia",
+    "pymilvus",
+    "milvus-lite",
+    "aiohttp",
+    "sentence-transformers",
+    "rich",
+    "pandas",
+    "numpy",
+    "camelot",
+    "jupyter_client",
+    "ipykernel",
+    "tqdm",
+]
+
+[project.scripts]
+droplet = "droplet.main:main"
+
+[tool.setuptools.packages.find]
+include = ["droplet*"]
