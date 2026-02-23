@@ -385,11 +385,11 @@ class RITSBackend(VLLMBackend):
         """
         try:
             self._fetch_available_models()
-        except (requests.exceptions.ConnectTimeout, requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+        except (requests.exceptions.ConnectTimeout, requests.exceptions.ConnectionError, requests.exceptions.Timeout):
             raise RuntimeError(
-                f"Failed to connect to RITS server.\n"
-                f"Connection to rits.fmaas.res.ibm.com timed out.\n"
-                f"Please check your network connection or VPN."
+                "Failed to connect to RITS server.\n"
+                "Connection to rits.fmaas.res.ibm.com timed out.\n"
+                "Please check your network connection or VPN."
             )
 
     def stop(self):

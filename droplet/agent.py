@@ -17,6 +17,10 @@ from droplet.rich_terminal import (blue_print, debug_print_error,
                                    debug_print_prompt)
 
 
+class Backend500Error(RuntimeError):
+    """Raised when the inference backend returns HTTP 500."""
+
+
 def load_tiktoken_with_retry(encoding_name, max_retries=3, delay=2):
     """
     Load tiktoken encoding with retry logic for network issues
@@ -84,8 +88,6 @@ for logger_name in [
     logger = logging.getLogger(logger_name)
     logger.setLevel(logging.CRITICAL)
     logger.propagate = False
-
-
 
 
 class HarmonyMessageConverter:
@@ -207,6 +209,7 @@ class DropletAgent:
         developer_prompt=None,
         initial_prompt=None,
         loop_tool_fail=None,
+        input_prefix=None,
         gpt_reasoning=None,
         # generation
         temperature=0.0,
@@ -236,6 +239,7 @@ class DropletAgent:
             developer_prompt: Additional developer instructions added as developer message
             initial_prompt: Override default initial prompt (default: class-level INITIAL_PROMPT)
             loop_tool_fail: Override default loop failure message (default: class-level LOOP_TOOL_FAIL)
+            input_prefix: Prefix to add to user input messages (e.g., "Question: ") (default: None)
             gpt_reasoning: GPT-OSS reasoning effort level: "low", "medium", or "high" (default: None, uses model default)
             temperature: Sampling temperature (default: 0.0)
             max_tokens: Maximum tokens to generate (default: 32768)
@@ -314,6 +318,9 @@ class DropletAgent:
             self.LOOP_TOOL_FAIL = loop_tool_fail
         else:
             self.LOOP_TOOL_FAIL = DropletAgent.LOOP_TOOL_FAIL
+
+        # Store input prefix (default: no prefix)
+        self.input_prefix = input_prefix if input_prefix is not None else ""
 
         # Initialize tools
         tools = self._initialize_tools(tool_names, milvus_db, milvus_model, milvus_collection, bcp_server_url, semantic_scholar_api_key)
@@ -573,6 +580,10 @@ class DropletAgent:
             for config in tool_configs:
                 system_content = system_content.with_tools(config)
 
+            # Only override system prompt if explicitly provided (keeps default ChatGPT identity otherwise)
+            if self.SYSTEM_PROMPT is not None:
+                system_content.model_identity = self.SYSTEM_PROMPT
+
             # DON'T set model_identity when using tools - the tools configuration handles harmony format
             # If custom prompt needed, use developer_prompt instead
             system_message = Message.from_role_and_content(Role.SYSTEM, system_content)
@@ -789,7 +800,9 @@ class DropletAgent:
             max_iterations = self.max_iterations
 
         # Continue from a copy of conversation history
-        self.conversation_history.append(Message.from_role_and_content(Role.USER, prompt))
+        # Add prefix if specified (e.g., "Question: ")
+        prefixed_prompt = self.input_prefix + prompt
+        self.conversation_history.append(Message.from_role_and_content(Role.USER, prefixed_prompt))
 
         # grow conversation over one or more necessary tool calls
         for iteration in range(max_iterations):
@@ -818,7 +831,6 @@ class DropletAgent:
 
             # Retry generation if harmony parsing fails (model may generate incorrect format occasionally)
             max_retries = 20
-            last_parse_error = None
 
             for attempt in range(1, max_retries + 1):
                 # Use backend to generate completion
@@ -841,6 +853,10 @@ class DropletAgent:
                                 f"  • Backend server issue\n"
                                 f"Try reducing tool output size or restarting the backend."
                             )
+                            print(f"\n\033[91m✗ Error: {error_msg}\033[0m\n")
+                            self._save_conversation_log()
+                            self._save_out_messages()
+                            raise Backend500Error(error_msg)
                         else:
                             error_msg = f"Backend returned status {status_code}: {e.response.text[:200]}"
                     print(f"\n\033[91m✗ Error: {error_msg}\033[0m\n")
@@ -876,7 +892,6 @@ class DropletAgent:
                     self.conversation_history.extend(parsed_messages)
                     break
                 except HarmonyError as he:
-                    last_parse_error = he
                     if attempt < max_retries:
                         print(f"\n\033[93m⚠ Harmony parse error on attempt {attempt}/{max_retries}, retrying generation...\033[0m")
                         print(f"   Error: {str(he)[:100]}")
@@ -890,15 +905,28 @@ class DropletAgent:
             # inform user
             blue_print(f"└── {elapsed_time:.1f}s | ~{len(response_tokens)} tokens generated")
 
-            # Check if model wants to call a tool (check for recipient field in harmony messages)
-            if hasattr(self.conversation_history[-1], 'recipient') and self.conversation_history[-1].recipient:
-                # Execute the tool call and get result messages
-                tool_result_messages = self._execute_tool_call(self.conversation_history[-1], self.tool_instances)
-                self.conversation_history.extend(tool_result_messages)
+            last_message = self.conversation_history[-1]
 
-            else:
+            # Check if model wants to call a tool (check for recipient field in harmony messages)
+            if hasattr(last_message, 'recipient') and last_message.recipient:
+                # Execute the tool call and get result messages
+                tool_result_messages = self._execute_tool_call(last_message, self.tool_instances)
+                self.conversation_history.extend(tool_result_messages)
+                # Continue loop to process tool results
+
+            # Check if assistant marked response as final (proper harmony stop condition)
+            elif (last_message.author.role == Role.ASSISTANT and
+                  getattr(last_message, "channel", None) == "final"):
                 # Extract text content from last message
-                response_text = self.conversation_history[-1].content[0].text
+                response_text = last_message.content[0].text
+                self._save_conversation_log()
+                self._save_out_messages()
+                return response_text
+
+            # If neither tool call nor final, assume it's final (fallback for compatibility)
+            elif last_message.author.role == Role.ASSISTANT:
+                # Extract text content from last message
+                response_text = last_message.content[0].text
                 self._save_conversation_log()
                 self._save_out_messages()
                 return response_text

@@ -25,7 +25,9 @@ with DropletAgent(**config) as agent:
     assert "stdlib works" in response.lower() or "standard library" in response.lower(), "Stdlib test failed"
     print("✓ Test 1 passed: Standard library accessible")
     # Test 2: Third-party packages should NOT be available
+    response = agent.user_input(
         "Try to import the 'requests' package in Python and tell me what happens",
+    )
     # Should mention error or not available
     assert "error" in response.lower() or "not" in response.lower() or "cannot" in response.lower(), "Package isolation test failed"
     print("✓ Test 2 passed: Third-party packages not accessible")

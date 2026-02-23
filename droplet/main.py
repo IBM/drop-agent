@@ -162,6 +162,8 @@ Examples:
                        help='Override default initial prompt')
     parser.add_argument('--loop-tool-fail', type=str,
                        help='Override default loop failure message')
+    parser.add_argument('--input-prefix', type=str,
+                       help='Prefix to add to user input messages (e.g., "Question: ")')
     parser.add_argument('--gpt-reasoning', type=str, choices=['low', 'medium', 'high'],
                        help='GPT-OSS reasoning effort level: low, medium, or high (default: model default)')
 
@@ -273,6 +275,7 @@ Examples:
         'developer_prompt': args.developer_prompt,
         'initial_prompt': args.initial_prompt,
         'loop_tool_fail': args.loop_tool_fail,
+        'input_prefix': args.input_prefix,
         'gpt_reasoning': args.gpt_reasoning,
         'temperature': args.temperature,
         'max_tokens': args.max_tokens,

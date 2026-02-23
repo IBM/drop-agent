@@ -7,7 +7,6 @@ Uses stateful Jupyter kernel execution where variables and imports persist betwe
 """
 
 import asyncio
-import contextlib
 import logging
 from typing import AsyncIterator
 
@@ -25,7 +24,7 @@ class LocalJupyterSession:
     def __init__(self, timeout: float = 120.0) -> None:
         import sys
         from jupyter_client import KernelManager
-        from jupyter_client.kernelspec import KernelSpecManager, NoSuchKernel
+        from jupyter_client.kernelspec import KernelSpecManager
 
         self._default_timeout = timeout
 

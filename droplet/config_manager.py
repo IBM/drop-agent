@@ -95,15 +95,11 @@ def list_configs():
     print("Saved configurations:\n")
     for name, config in sorted(configs.items()):
         print(f"  • {name}")
-        # Show key settings
-        if 'model' in config:
-            print(f"    model: {config['model']}")
-        if 'backend_type' in config:
-            print(f"    backend: {config['backend_type']}")
-        if 'backend_url' in config and config['backend_type'] != 'rits-vllm':
-            print(f"    url: {config['backend_url']}")
-        if 'tools' in config:
-            print(f"    tools: {', '.join(config['tools'])}")
+        for key, value in config.items():
+            if isinstance(value, list):
+                print(f"    {key}: {', '.join(str(v) for v in value)}")
+            else:
+                print(f"    {key}: {value}")
         print()
 
     print("To select a config: droplet -c <name>\n")

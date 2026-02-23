@@ -6,7 +6,7 @@ import argparse
 import asyncio
 import multiprocessing as mp
 from tqdm import tqdm
-from droplet.agent import DropletAgent
+from droplet.agent import DropletAgent, Backend500Error
 from droplet.main import build_agent_config
 from droplet.rich_terminal import blue_print
 
@@ -35,14 +35,14 @@ def load_jsonl_data(jsonl_path):
     return data
 
 
-def worker_entry(worker_idx, num_workers, eval_args, agent_config):
+def worker_entry(worker_idx, num_workers, eval_args, agent_config, error_500_counter, kill_event):
     os.environ["OMP_NUM_THREADS"] = "1"
     node_rank = int(os.getenv("RANK", 0))
     node_size = int(os.getenv("WORLD_SIZE", 1))
-    asyncio.run(_run_worker(worker_idx, num_workers, node_rank, node_size, eval_args, agent_config))
+    asyncio.run(_run_worker(worker_idx, num_workers, node_rank, node_size, eval_args, agent_config, error_500_counter, kill_event))
 
 
-async def _run_worker(worker_idx, num_workers, node_rank, node_size, eval_args, agent_config):
+async def _run_worker(worker_idx, num_workers, node_rank, node_size, eval_args, agent_config, error_500_counter, kill_event):
     sem = asyncio.Semaphore(eval_args.max_concurrency_per_worker)
     loop = asyncio.get_event_loop()
 
@@ -72,10 +72,15 @@ async def _run_worker(worker_idx, num_workers, node_rank, node_size, eval_args, 
     print(f"[Worker {worker_idx}] Processing {len(tasks_to_process)} items")
 
     async def process_item(item_data):
+        if kill_event.is_set():
+            return None
         async with sem:
+            if kill_event.is_set():
+                return None
+
             qid = item_data['qid']
             question = item_data['question']
-            answer = item_data['answer']
+
 
             blue_print(f"\n[Worker {worker_idx}] QID {qid}: {question}\n")
 
@@ -105,6 +110,17 @@ async def _run_worker(worker_idx, num_workers, node_rank, node_size, eval_args, 
                         "status": "success"
                     })
                     return rec
+                except Backend500Error:
+                    import traceback
+                    error_msg = traceback.format_exc()
+                    with error_500_counter.get_lock():
+                        error_500_counter.value += 1
+                        count = error_500_counter.value
+                    print(f"[Worker {worker_idx}] qid {qid}: backend 500 error (total across workers: {count}/{eval_args.max_500_errors})")
+                    if count >= eval_args.max_500_errors:
+                        kill_event.set()
+                        print(f"[Worker {worker_idx}] ERROR: too many backend 500 errors ({count}). Aborting experiment.")
+                    break  # don't retry on 500
                 except Exception as e:
                     import traceback
                     error_msg = traceback.format_exc()
@@ -126,8 +142,13 @@ async def _run_worker(worker_idx, num_workers, node_rank, node_size, eval_args, 
     with open(shard_path, "a", encoding="utf-8") as writer:
         for fut in tqdm(asyncio.as_completed(tasks), total=len(tasks), desc=f"Worker {worker_idx}"):
             rec = await fut
-            writer.write(json.dumps(rec, ensure_ascii=False) + "\n")
-            writer.flush()
+            if rec is not None:
+                writer.write(json.dumps(rec, ensure_ascii=False) + "\n")
+                writer.flush()
+
+    if kill_event.is_set():
+        print(f"[Worker {worker_idx}] Experiment aborted due to too many backend 500 errors.")
+        sys.exit(1)
 
     print(f"[Worker {worker_idx}] Done.")
 
@@ -177,6 +198,8 @@ Examples:
     parser.add_argument("--num_workers", type=int, default=DEFAULT_NUM_WORKERS, help="Number of worker processes")
     parser.add_argument("--max_concurrency_per_worker", type=int, default=DEFAULT_CONCURRENCY_PER_WORKER, help="Max concurrent tasks per worker")
     parser.add_argument("--max_retries", type=int, default=DEFAULT_MAX_RETRIES, help="Max retries per question")
+    parser.add_argument("--max-500-errors", type=int, default=5, dest="max_500_errors",
+                        help="Abort the experiment after this many backend 500 errors across all workers (default: 5)")
 
     # Parse only known args to allow build_agent_config to handle the rest
     args, unknown_args = parser.parse_known_args()
@@ -224,7 +247,7 @@ Examples:
         agent_config['bcp_server_url'] = 'http://localhost:8000'
         print(f"Using default BCP server URL: {agent_config['bcp_server_url']}")
 
-    print(f"\nEvaluation Configuration:")
+    print("\nEvaluation Configuration:")
     print(f"  Input file: {args.input_file}")
     print(f"  Output directory: {args.output_dir}")
     print(f"  Model: {agent_config['model']}")
@@ -239,11 +262,14 @@ Examples:
 
     os.makedirs(args.output_dir, exist_ok=True)
 
+    error_500_counter = mp.Value('i', 0)
+    kill_event = mp.Event()
+
     procs = []
     for i in range(args.num_workers):
         p = mp.Process(
             target=worker_entry,
-            args=(i, args.num_workers, args, agent_config)
+            args=(i, args.num_workers, args, agent_config, error_500_counter, kill_event)
         )
         p.start()
         procs.append(p)

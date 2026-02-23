@@ -4,7 +4,6 @@ Adapted from gma-rag-rl/src/retrievers/browser_retriever_tool.py
 """
 
 import html
-import json
 import logging
 import time
 from typing import AsyncIterator
@@ -12,9 +11,8 @@ from typing import AsyncIterator
 from gpt_oss.tools.simple_browser.backend import BackendError
 from gpt_oss.tools.simple_browser.page_contents import process_html
 from gpt_oss.tools.simple_browser.simple_browser_tool import (
-    SimpleBrowserTool, maybe_get_function_args)
-from openai_harmony import (Author, Message, Role, TextContent,
-                            ToolNamespaceConfig)
+    SimpleBrowserTool)
+from openai_harmony import (Message, ToolNamespaceConfig)
 
 logger = logging.getLogger(__name__)
 

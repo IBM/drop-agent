@@ -21,7 +21,7 @@ def preload_encodings():
         try:
             print(f"  Loading {encoding_name}...", end=" ", flush=True)
             enc = tiktoken.get_encoding(encoding_name)
-            test_tokens = enc.encode("test")
+            enc.encode("test")
             print(f"✓ (vocab size: {enc.n_vocab})")
         except Exception as e:
             print(f"✗ Failed: {e}")

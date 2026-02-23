@@ -1,10 +1,14 @@
 *.swp
+*.log
+*.json
 droplet.egg-info/
 */__pycache__
 __pycache__
 drop-scenarios
 # 
 .env
+cenv/
+set_environment.sh
 #
 GPT-OSS-BrowseCompPlus-Eval/
 drop-agent.wiki/
