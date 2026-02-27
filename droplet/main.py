@@ -102,6 +102,16 @@ def build_agent_config():
     parser.add_argument('--gpt-reasoning', type=str, choices=['low', 'medium', 'high'],
                        help='GPT-OSS reasoning effort level: low, medium, or high (default: model default)')
 
+    # Context compaction
+    parser.add_argument('--context-compaction-method',
+                       choices=['keep_last_n', 'llm_keep_last_n'],
+                       default=None,
+                       help='Context compaction method (default: None = disabled)')
+    parser.add_argument('--context-compaction-threshold', type=int, default=64000,
+                       help='Token threshold to trigger context compaction (default: 64000)')
+    parser.add_argument('--max-context-compactions', type=int, default=3,
+                       help='Max compaction rounds per user input (default: 3)')
+
     # Configuration management
     parser.add_argument('-c', '--load-config', type=str, metavar='NAME',
                        help='Load a saved configuration')
@@ -215,6 +225,9 @@ def build_agent_config():
         'temperature': args.temperature,
         'max_tokens': args.max_tokens,
         'max_iterations': args.max_iterations,
+        'context_compaction_method': args.context_compaction_method,
+        'context_compaction_threshold': args.context_compaction_threshold,
+        'max_context_compactions': args.max_context_compactions,
     }
 
     # Return cwd and no_initial_summary separately (not part of agent config)

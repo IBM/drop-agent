@@ -127,6 +127,10 @@ class DropletAgent:
         temperature=0.0,
         max_tokens=32768,
         max_iterations=10,
+        # context compaction
+        context_compaction_method=None,
+        context_compaction_threshold=64000,
+        max_context_compactions=3,
     ):
         """
         Initialize the agent
@@ -156,6 +160,9 @@ class DropletAgent:
             temperature: Sampling temperature (default: 0.0)
             max_tokens: Maximum tokens to generate (default: 32768)
             max_iterations: Maximum tool call iterations per user input (default: 10)
+            context_compaction_method: Method name ("keep_last_n" or "llm_keep_last_n"); None disables
+            context_compaction_threshold: Token count threshold to trigger compaction (default: 64000)
+            max_context_compactions: Max times compaction can fire per user_input() call (default: 3)
         """
         # Initialize backend based on type
         if backend_type == "ollama":
@@ -192,6 +199,11 @@ class DropletAgent:
             "stop_tokens": self.converter.get_stop_tokens(),
         }
         self.max_iterations = max_iterations
+
+        # Context compaction settings
+        self.context_compaction_method = context_compaction_method
+        self.context_compaction_threshold = context_compaction_threshold
+        self.max_context_compactions = max_context_compactions
 
         # Initialize state
         self.state = {}
@@ -241,6 +253,9 @@ class DropletAgent:
         # Setup initial conversation with system messages and tools
         initial_messages, self.tool_instances = self._setup_tool_messages(tools)
         self.conversation_history = initial_messages
+
+        # Track how many prefix messages (SYSTEM + optional DEVELOPER) to always preserve during compaction
+        self._num_system_messages = len(initial_messages)
 
     def __enter__(self):
         """Context manager entry"""
@@ -748,11 +763,104 @@ class DropletAgent:
         # Return the actual tool result messages
         return result_messages
 
+    # ── Context compaction ──────────────────────────────────────────
+
+    _COMPACTION_METHODS = {
+        "keep_last_n": "_compact_keep_last_n",
+        "llm_keep_last_n": "_compact_llm_keep_last_n",
+    }
+
+    # Number of recent conversation messages to retain after compaction
+    COMPACTION_KEEP_N = 5
+
+    def _compact_keep_last_n(self, messages, original_question):
+        """Keep system prefix, the original question, and last N conversation messages."""
+        n = self.COMPACTION_KEEP_N
+        prefix = messages[:self._num_system_messages]
+        conversation_msgs = messages[self._num_system_messages:]
+
+        question_msg = Message.from_role_and_content(Role.USER, original_question)
+
+        # conversation_msgs[0] is the original user question — skip it since
+        # we re-inject it as question_msg to avoid duplication.
+        if len(conversation_msgs) <= n + 1:
+            return prefix + [question_msg] + conversation_msgs[1:]
+
+        return prefix + [question_msg] + conversation_msgs[-n:]
+
+    def _compact_llm_keep_last_n(self, messages, original_question):
+        """Compact older messages with LLM, keep last N verbatim."""
+        n = self.COMPACTION_KEEP_N
+        prefix = messages[:self._num_system_messages]
+        conversation_msgs = messages[self._num_system_messages:]
+
+        if len(conversation_msgs) <= n:
+            return prefix + [Message.from_role_and_content(Role.USER, original_question)] + conversation_msgs
+
+        msgs_to_compact = conversation_msgs[:-n]
+        last_n = conversation_msgs[-n:]
+
+        # Build context text from older messages
+        context_lines = []
+        for msg in msgs_to_compact:
+            role = msg.author.role.name
+            content = msg.content[0].text if msg.content else ""
+            context_lines.append(f"{role}: {content}")
+
+        summary_prompt = (
+            "You are summarizing research progress to maintain context within token limits.\n\n"
+            f"QUESTION: {original_question}\n\n"
+            "Please provide a comprehensive summary of the research context below. "
+            "Your summary should:\n"
+            "- Preserve ALL specific facts, numbers, names, URLs, and search queries found\n"
+            "- Note which tools were called and what results were obtained\n"
+            "- Highlight key findings and any dead ends encountered\n"
+            "- Keep the summary under 2000 words\n"
+            "- Be structured clearly so the research can continue seamlessly\n\n"
+            "Context to summarize:\n"
+            f"{chr(10).join(context_lines)}"
+        )
+
+        summary_messages = [
+            Message.from_role_and_content(Role.SYSTEM, "You are a research assistant that summarizes conversation context."),
+            Message.from_role_and_content(Role.USER, summary_prompt),
+        ]
+
+        # Use the orchestrator (model-independent) to generate the summary
+        result = self.orchestrator.generate_messages(
+            messages=summary_messages,
+            model=self.model,
+            options=self.options,
+            timeout=300,
+        )
+
+        summary_text = ""
+        for msg in result.messages:
+            if msg.author.role == Role.ASSISTANT and msg.content:
+                summary_text += msg.content[0].text
+
+        summary_msg = Message.from_role_and_content(
+            Role.USER,
+            f"[CONTEXT SUMMARY]\n{summary_text}\n\nContinue the research for: {original_question}",
+        )
+        return prefix + [summary_msg] + last_n
+
+    def _compact_context(self, messages, original_question):
+        """Dispatch to the configured compaction method."""
+        method_name = self._COMPACTION_METHODS.get(self.context_compaction_method)
+        if not method_name:
+            raise RuntimeError(f"Unknown compaction method: {self.context_compaction_method}")
+        return getattr(self, method_name)(messages, original_question)
+
+    # ── Main loop ────────────────────────────────────────────────────
+
     def user_input(self, prompt, max_iterations=None):
         """Run tool calling loop with retry logic using completions API + harmony"""
 
         if max_iterations is None:
             max_iterations = self.max_iterations
+
+        context_compaction_count = 0
 
         # Continue from a copy of conversation history
         # Add prefix if specified (e.g., "Question: ")
@@ -765,6 +873,27 @@ class DropletAgent:
             # Pre-compute prompt for validation and debug
             prompt_string = self.converter.messages_to_prompt_string(self.conversation_history)
             prompt_token_count = self.converter.count_tokens(prompt_string)
+
+            # Context compaction: if enabled and threshold exceeded, try to compact
+            if (self.context_compaction_threshold is not None
+                    and prompt_token_count > self.context_compaction_threshold
+                    and context_compaction_count < self.max_context_compactions):
+
+                blue_print(
+                    f"📝 Context ({self._format_tokens(prompt_token_count)}) exceeds threshold "
+                    f"({self._format_tokens(self.context_compaction_threshold)}), compacting..."
+                )
+
+                self.conversation_history = self._compact_context(
+                    self.conversation_history, prefixed_prompt
+                )
+                context_compaction_count += 1
+
+                # Recompute prompt after compaction
+                prompt_string = self.converter.messages_to_prompt_string(self.conversation_history)
+                prompt_token_count = self.converter.count_tokens(prompt_string)
+
+                blue_print(f"📝 Context after compaction: {self._format_tokens(prompt_token_count)}")
 
             # Validate context size
             if prompt_token_count > self.max_context_tokens:
