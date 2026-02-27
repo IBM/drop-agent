@@ -2,7 +2,7 @@ set -o errexit
 set -o pipefail
 set -o nounset
 
-
+mkdir -p results/
 config="$1"
 RESULTS_TAG=$(basename $config .sh)-$LSB_JOBID
 RESULTS_PATH=$(realpath results/$RESULTS_TAG/)

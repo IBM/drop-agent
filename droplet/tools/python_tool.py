@@ -23,6 +23,7 @@ class LocalJupyterSession:
 
     def __init__(self, timeout: float = 120.0) -> None:
         import sys
+
         from jupyter_client import KernelManager
         from jupyter_client.kernelspec import KernelSpecManager
 

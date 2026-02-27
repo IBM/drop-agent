@@ -61,7 +61,7 @@ class OllamaBackend(BaseBackend):
 
     def is_running(self):
         """Check if Ollama server is already running"""
-        response = requests.get(f"{self.host}/api/tags")
+        response = requests.get(f"{self.host}/api/tags", timeout=5)
         return response.status_code == 200
 
     def _check_server_running(self):
@@ -128,7 +128,7 @@ class OllamaBackend(BaseBackend):
         Args:
             model_name: Name of the model to pull (e.g., 'llama2')
         """
-        response = requests.get(f"{self.host}/api/tags")
+        response = requests.get(f"{self.host}/api/tags", timeout=10)
         models = response.json()["models"]
 
         if any(model["name"].startswith(model_name) for model in models):
@@ -230,7 +230,7 @@ class VLLMBackend(BaseBackend):
         vLLM is expected to have the model loaded, so this is a no-op
         Just verify the model is available
         """
-        response = requests.get(f"{self.base_url}/v1/models")
+        response = requests.get(f"{self.base_url}/v1/models", timeout=60)
         models_data = response.json()
         available_models = [m["id"] for m in models_data["data"]]
 
@@ -429,7 +429,7 @@ class RITSBackend(VLLMBackend):
         base_endpoint = self.base_url.rstrip('/v1')
         headers = {"RITS_API_KEY": self.api_key}
         health_url = f"{base_endpoint}/health"
-        response = requests.get(health_url, headers=headers, timeout=2)
+        response = requests.get(health_url, headers=headers, timeout=60)
         if response.status_code != 200:
             raise RuntimeError(
                 f"RITS endpoint for model '{model_name}' is not accessible.\n"

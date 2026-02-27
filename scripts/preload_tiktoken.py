@@ -7,6 +7,7 @@ so the application can run without internet access.
 """
 
 import sys
+
 import tiktoken
 
 

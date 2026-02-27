@@ -8,9 +8,9 @@ Usage:
 """
 
 import argparse
+import glob
 import json
 import os
-import glob
 import random
 import re
 import statistics as _statistics
@@ -359,8 +359,8 @@ def main():
             print_sample(name, rec)
             if i < len(samples) - 1:
                 try:
-                    import tty
                     import termios
+                    import tty
                     print('\n-- Press any key for next sample (Ctrl+C to quit) --', end='', flush=True)
                     with open('/dev/tty') as tty_f:
                         fd = tty_f.fileno()

@@ -10,9 +10,8 @@ from typing import AsyncIterator
 
 from gpt_oss.tools.simple_browser.backend import BackendError
 from gpt_oss.tools.simple_browser.page_contents import process_html
-from gpt_oss.tools.simple_browser.simple_browser_tool import (
-    SimpleBrowserTool)
-from openai_harmony import (Message, ToolNamespaceConfig)
+from gpt_oss.tools.simple_browser.simple_browser_tool import SimpleBrowserTool
+from openai_harmony import Message, ToolNamespaceConfig
 
 logger = logging.getLogger(__name__)
 

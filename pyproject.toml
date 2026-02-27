@@ -26,6 +26,7 @@ dependencies = [
     "pandas",
     "numpy",
     "camelot",
+    "chardet<6.0.0",  # Pin chardet < 6.0.0 for requests compatibility
     "jupyter_client",
     "ipykernel",
     "tqdm",

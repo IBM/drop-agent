@@ -1,6 +1,5 @@
 """Main entry point for droplet"""
 
-import argparse
 import inspect
 import os
 import subprocess
@@ -11,6 +10,7 @@ from droplet import dbg_tools
 from droplet.agent import DropletAgent
 from droplet.config_manager import list_configs, load_config, save_config
 from droplet.rich_cl import get_user_input
+from droplet.rich_help import create_argument_parser_with_rich_help
 from droplet.rich_terminal import LOGO_FAILURE, droplet_print, print_logo
 from droplet.rits_utils import list_rits_models_and_exit, resolve_api_key
 
@@ -22,74 +22,6 @@ def build_agent_config():
     Returns:
         tuple: (agent_config_dict, backend_name_for_display, initial_input, cwd, no_initial_summary) or (None, None, None, None, None) if should exit
     """
-    parser = argparse.ArgumentParser(
-        description='Droplet: Deep Research On Premise agent',
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  # Basic usage with Ollama backend (default)
-  droplet
-
-  # use  ollama (default)
-  droplet
-
-  # equivalent to
-  droplet --backend-type ollama --backend-url http://localhost:11434 --model gpt-oss:20b
-
-  # Use vLLM (needs you to launch server)
-  droplet --backend-type vllm --backend-url http://localhost:8000 --model gpt-oss-20b
-
-  # Use RITS (requires RITS API key)
-  droplet --backend-type rits-vllm --model ibm-granite/granite-3.0-8b-instruct --rits-api-key YOUR_KEY
-
-  # List available RITS models
-  droplet --rits-list-models --rits-api-key YOUR_KEY
-
-  # Local file browser only
-  droplet --tools FileBrowserTool
-
-  # Wikipedia browser only
-  droplet --tools WikipediaBrowserTool
-
-  # With Semantic Scholar paper search
-  droplet --tools SemanticScholarTool
-
-  # Semantic Scholar with API key for higher rate limits
-  droplet --tools SemanticScholarTool --semantic-scholar-api-key YOUR_KEY
-
-  # With Python code execution (requires approval by default)
-  droplet --tools PythonTool
-
-  # All browsing tools combined
-  droplet --tools FileBrowserTool WikipediaBrowserTool SemanticScholarTool PythonTool
-
-  # Disable approval prompts for all tools
-  droplet --require-approval
-
-  # Require approval only for specific tools
-  droplet --require-approval PythonTool
-
-  # With Milvus local retriever
-  droplet --tools RetrieverBrowserTool --milvus-db ~/DATA/droplet/my_database.db --milvus-collection my_collection
-
-  # Debug mode
-  droplet --debug
-
-  # vLLM with custom model
-  droplet --backend-type vllm --backend-url http://my-server:8000 --model my-custom-model
-
-  # Change working directory
-  droplet --cwd ~/my-project              # Operate from a specific directory
-  droplet --cwd /path/to/project          # Agent will cd there before starting
-
-  # Configuration management
-  droplet --save-config                    # Save as default config
-  droplet --save-config my-rits-setup      # Save with a name
-  droplet --list-configs                   # List saved configs
-  droplet --load-config my-rits-setup      # Load a specific config
-        """
-    )
-
     # Discover all *Tool classes from droplet.tools
     excluded_tools = {'SimpleFunctionTool', 'BrowseTool'}
     available_tools = {}
@@ -97,6 +29,9 @@ Examples:
         if name.endswith('Tool') and name not in excluded_tools:
             if hasattr(obj, '__module__') and obj.__module__.startswith('droplet'):
                 available_tools[name] = obj
+
+    # Create parser with rich help formatting
+    parser = create_argument_parser_with_rich_help(available_tools)
 
     # Backend configuration
     parser.add_argument('-b', '--backend-type', type=str, default='ollama',

@@ -23,26 +23,29 @@ def convert_tool_config_to_openai(tool_config_dict):
         ]
     }
 
-    OpenAI format:
+    OpenAI format (uses fully qualified names: namespace.tool):
     [
-        {"type": "function", "function": {"name": "search", "description": "...", "parameters": {...}}},
-        {"type": "function", "function": {"name": "open", "description": "...", "parameters": {...}}}
+        {"type": "function", "function": {"name": "browser.search", "description": "...", "parameters": {...}}},
+        {"type": "function", "function": {"name": "browser.open", "description": "...", "parameters": {...}}}
     ]
 
     Args:
         tool_config_dict: Dictionary from ToolNamespaceConfig.model_dump()
 
     Returns:
-        List of OpenAI-formatted tool definitions
+        List of OpenAI-formatted tool definitions with fully qualified names
     """
     openai_tools = []
 
     if "tools" in tool_config_dict:
+        namespace_name = tool_config_dict["name"]
         for tool_def in tool_config_dict["tools"]:
+            # Use fully qualified name: namespace.tool_name
+            full_name = f"{namespace_name}.{tool_def['name']}"
             openai_tool = {
                 "type": "function",
                 "function": {
-                    "name": tool_def["name"],
+                    "name": full_name,
                     "description": tool_def["description"],
                     "parameters": tool_def["parameters"]
                 }

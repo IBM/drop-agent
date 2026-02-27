@@ -1,8 +1,9 @@
 """Test Python sandbox isolation - verify packages are not accessible"""
 
-from droplet.agent import DropletAgent
 from droplet import dbg_tools
+from droplet.agent import DropletAgent
 from droplet.main import build_agent_config
+
 # Build config from CLI args and saved configs
 config, _, _, _, _ = build_agent_config()
 if config is None:

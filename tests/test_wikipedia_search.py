@@ -2,10 +2,11 @@
 
 This test uses the Wikipedia browser tool which provides search, open, and find functionality.
 """
-from droplet.agent import DropletAgent
 from droplet import dbg_tools
+from droplet.agent import DropletAgent
 from droplet.main import build_agent_config
 from droplet.rich_terminal import droplet_print
+
 # Build config from CLI args and saved configs, then override for test
 config, _, _, _, _ = build_agent_config()
 if config is None:

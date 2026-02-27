@@ -3,6 +3,8 @@
 # Import base utilities
 from droplet.tools.base import (SimpleFunctionTool,
                                 convert_tool_config_to_openai)
+# Import BCP browser
+from droplet.tools.bcp_browser import BCPBackend, BCPBrowserTool
 # Import file browser
 from droplet.tools.file_browser import FileBackend, FileBrowserTool
 # Import Milvus tools
@@ -15,8 +17,6 @@ from droplet.tools.semantic_scholar import (SemanticScholarBackend,
 # Import Wikipedia browser
 from droplet.tools.wikipedia_browser import (WikipediaBackend,
                                              WikipediaBrowserTool)
-# Import BCP browser
-from droplet.tools.bcp_browser import BCPBackend, BCPBrowserTool
 
 # Maintain BrowseTool alias (deprecated)
 BrowseTool = FileBrowserTool

@@ -1,15 +1,16 @@
-import os
-import sys
-import json
-import time
 import argparse
 import asyncio
+import json
 import multiprocessing as mp
+import os
+import sys
+import time
+
 from tqdm import tqdm
-from droplet.agent import DropletAgent, Backend500Error
+
+from droplet.agent import Backend500Error, DropletAgent
 from droplet.main import build_agent_config
 from droplet.rich_terminal import blue_print
-
 
 DEFAULT_NUM_WORKERS = 4
 DEFAULT_CONCURRENCY_PER_WORKER = 4

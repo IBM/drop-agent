@@ -1,9 +1,10 @@
 """Unit test for gpt-oss tool calling: read and analyze file using unified browse tool"""
 
-from droplet.agent import DropletAgent
 from droplet import dbg_tools
+from droplet.agent import DropletAgent
 from droplet.main import build_agent_config
 from droplet.rich_terminal import droplet_print
+
 
 def test_read_file():
     # Build config from CLI args and saved configs, then override for test

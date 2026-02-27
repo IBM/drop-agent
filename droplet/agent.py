@@ -4,55 +4,19 @@ import asyncio
 import datetime
 import json
 import logging
+import os
 import time
 
-import requests
-import tiktoken
-from openai_harmony import (Author, Conversation, HarmonyEncodingName, HarmonyError, Message,
-                            ReasoningEffort, Role, StreamableParser, SystemContent,
-                            TextContent, load_harmony_encoding)
+from openai_harmony import (Author, HarmonyError, Message, ReasoningEffort,
+                            Role, SystemContent, TextContent)
 
 from droplet.backend import OllamaBackend, RITSBackend, VLLMBackend
-from droplet.rich_terminal import (blue_print, debug_print_error,
-                                   debug_print_prompt)
-
-
-class Backend500Error(RuntimeError):
-    """Raised when the inference backend returns HTTP 500."""
-
-
-def load_tiktoken_with_retry(encoding_name, max_retries=3, delay=2):
-    """
-    Load tiktoken encoding with retry logic for network issues
-
-    Args:
-        encoding_name: Name of the tiktoken encoding to load
-        max_retries: Maximum number of retry attempts
-        delay: Delay in seconds between retries
-
-    Returns:
-        tiktoken.Encoding object
-
-    Raises:
-        RuntimeError: If encoding cannot be loaded after all retries
-    """
-    last_error = None
-
-    for attempt in range(max_retries):
-        try:
-            return tiktoken.get_encoding(encoding_name)
-        except Exception as e:
-            last_error = e
-            error_msg = str(e)
-
-            if "error downloading" in error_msg.lower() or "error decoding" in error_msg.lower():
-                if attempt < max_retries - 1:
-                    print(f"\n⚠️  Failed to download tiktoken encoding (attempt {attempt + 1}/{max_retries}). Retrying in {delay}s...")
-                    time.sleep(delay)
-                    continue
-            raise RuntimeError(f"Failed to load tiktoken encoding '{encoding_name}': {error_msg}")
-
-    raise RuntimeError(f"Failed to load tiktoken encoding '{encoding_name}' after {max_retries} attempts: {last_error}")
+from droplet.converters import get_converter_for_model
+from droplet.generation_orchestrator import (Backend500Error,
+                                             BackendConnectionError,
+                                             BackendHTTPError, GenerationError,
+                                             GenerationOrchestrator)
+from droplet.rich_terminal import blue_print, debug_print_error
 
 # Configure logging to reduce verbosity from gpt_oss and related libraries
 # gpt_oss uses structlog, so we need to configure it
@@ -90,84 +54,32 @@ for logger_name in [
     logger.propagate = False
 
 
-class HarmonyMessageConverter:
-    """Encapsulates harmony encoding/decoding logic for message conversion"""
-
-    def __init__(self):
-        self.encoding = load_harmony_encoding(HarmonyEncodingName.HARMONY_GPT_OSS)
-        # Use tiktoken for token-to-text conversion with retry logic
-        self.tiktoken_encoding = load_tiktoken_with_retry("o200k_harmony")
-
-    def messages_to_tokens(self, messages):
-        """Convert message list to token IDs"""
-        # Convert dicts to Message objects if needed
-        message_objects = []
-        for msg in messages:
-            if isinstance(msg, dict):
-                message_objects.append(Message.from_dict(msg))
-            else:
-                message_objects.append(msg)
-
-        # Create conversation and render to tokens
-        conversation = Conversation.from_messages(message_objects)
-        tokens = self.encoding.render_conversation_for_completion(conversation, Role.ASSISTANT)
-        return tokens
-
-    def messages_to_prompt_string(self, messages):
-        """Convert message list to a formatted string prompt using harmony rendering"""
-        # Convert to tokens using harmony
-        tokens = self.messages_to_tokens(messages)
-
-        # Decode tokens to string
-        prompt_string = self.tiktoken_encoding.decode(tokens)
-
-        return prompt_string
-
-    def tokens_to_messages(self, tokens):
-        """Parse token IDs back to Message objects"""
-        messages = self.encoding.parse_messages_from_completion_tokens(tokens, Role.ASSISTANT)
-        return list(messages)
-
-    def response_string_to_messages(self, response_text):
-        """Parse response string back to Message objects using harmony"""
-        # Encode string to tokens
-        tokens = self.tiktoken_encoding.encode(response_text)
-
-        # Parse tokens back to messages
-        messages = self.tokens_to_messages(tokens)
-
-        return messages
-
-    def get_stop_tokens(self):
-        """Get harmony stop token IDs for assistant actions"""
-        return self.encoding.stop_tokens_for_assistant_actions()
-
-    def create_parser(self):
-        """Create a streamable parser for incremental token processing"""
-        return StreamableParser(self.encoding, role=Role.ASSISTANT)
-
-
 class DropletAgent:
     """
-    Agent scaffold using pluggable backends (Ollama or vLLM) with Harmony message conversion
+    Model-independent agent scaffold using pluggable backends and message converters
 
-    This implementation demonstrates proper harmony encoding/decoding for completions API:
-    - Uses HarmonyMessageConverter to convert messages -> tokens -> string (for prompt)
-    - Calls backend's generate() method (text-based completions API)
-    - Parses response tokens back to messages using harmony (for tool calls)
+    This implementation uses abstract message converters to support multiple model families:
+    - GPT-OSS models: HarmonyMessageConverter with harmony encoding/decoding
+    - Granite/HF models: GraniteMessageConverter with transformers chat templates
+
+    Architecture:
+    - MessageConverter abstraction handles model-specific formatting
+    - Backend layer (Ollama/vLLM/RITS) provides model-agnostic inference
+    - Tool execution uses harmony Message objects internally
+    - Converter translates between Message objects and model-specific formats
 
     Supported Backends:
     - Ollama: Local backend using /api/generate endpoint
     - vLLM: Remote backend using OpenAI-compatible /v1/completions endpoint
+    - RITS: Remote RITS backend with API key authentication
 
     Key Design:
-    - Harmony encoding formats the input prompt with proper message structure
-    - Tools are included in the system message via SystemContent.with_tools()
-    - Response parsing uses backend's 'context' field (full token sequence)
-    - New tokens are extracted and parsed back to messages via harmony
-    - Tool calls are properly detected via the 'recipient' field in parsed messages
+    - Converter selection based on model name pattern matching
+    - Tools use ToolNamespaceConfig, converter translates to model format
+    - Response parsing handles both token-based (Harmony) and text-based (Granite)
+    - Tool calls detected via 'recipient' field in parsed messages
 
-    See HarmonyMessageConverter for the encapsulated conversion logic.
+    See droplet.converters module for converter implementations.
     """
 
     # Class-level prompt constants
@@ -264,17 +176,20 @@ class DropletAgent:
         self.debug = debug
         self.base_url = base_url.rstrip('/')
 
-        # Get model info from Ollama and setup tokenizer
-        self._setup_tokenizer_and_limits()
+        # Initialize message converter for this model
+        self.converter = get_converter_for_model(self.model)
 
-        # Initialize harmony converter
-        self.harmony = HarmonyMessageConverter()
+        # Initialize generation orchestrator
+        self.orchestrator = GenerationOrchestrator(self.backend, self.converter)
+
+        # Setup tokenizer and context limits via converter
+        self._setup_tokenizer_and_limits()
 
         # generator options
         self.options = {
             "temperature": temperature,
             "max_tokens": max_tokens,
-            "stop_tokens": self.harmony.get_stop_tokens(),  # Harmony stop tokens
+            "stop_tokens": self.converter.get_stop_tokens(),
         }
         self.max_iterations = max_iterations
 
@@ -301,10 +216,8 @@ class DropletAgent:
 
         # Setup prompts before initializing tools (needed by _setup_tool_messages)
         if not no_droplet_sytem_prompt:
-            self.SYSTEM_PROMPT = (
-                "You are DROP a Deep Research On Premise agent designed by IBM. You are currently using the backend "
-                "ChatGPT, a large language model trained by OpenAI (model {}).".format(self.model)
-            )
+            # Use converter's model-specific system prompt
+            self.SYSTEM_PROMPT = self.converter.get_default_system_prompt(self.model)
         else:
             self.SYSTEM_PROMPT = system_prompt
 
@@ -448,19 +361,8 @@ class DropletAgent:
         return tools
 
     def _setup_tokenizer_and_limits(self):
-        """
-        Setup tokenizer and context limits for supported models
-        """
-        # Only support gpt-oss models
-        if "gpt-oss" not in self.model:
-            raise RuntimeError(
-                f"Unsupported model '{self.model}'. "
-                f"Only gpt-oss models are currently supported."
-            )
-
-        # FIXME: Hard-coded values for gpt-oss
-        self.max_context_tokens = 128000
-        self.encoding = load_tiktoken_with_retry("o200k_harmony")
+        """Setup tokenizer and context limits via converter"""
+        self.max_context_tokens = self.converter.get_max_context_tokens()
 
     def _format_tokens(self, tokens):
         """Format token count as thousands (K)"""
@@ -633,6 +535,50 @@ class DropletAgent:
 
         return messages, tool_instances
 
+    def _replace_cursor_with_url_in_display_args(self, recipient, display_args, tool_instances):
+        """Replace cursor argument with URL/path for browser tools in display args"""
+        if recipient not in tool_instances:
+            return
+        if "cursor" not in display_args:
+            return
+
+        tool = tool_instances[recipient]
+        if not hasattr(tool, 'tool_state'):
+            return
+        if not hasattr(tool.tool_state, 'page_stack'):
+            return
+
+        cursor = display_args["cursor"]
+        page_stack = tool.tool_state.page_stack
+
+        url = None
+        if isinstance(cursor, int):
+            if cursor == -1:
+                if len(page_stack) > 0:
+                    url = page_stack[-1]
+            else:
+                if 0 <= cursor < len(page_stack):
+                    url = page_stack[cursor]
+
+        if url is None:
+            return
+
+        display_path = url
+        if url.startswith("file://"):
+            from urllib.parse import unquote
+            file_path = unquote(url[7:])
+
+            cwd = os.getcwd()
+            abs_path = os.path.abspath(file_path)
+            if abs_path.startswith(cwd + os.sep) or abs_path == cwd:
+                rel_path = os.path.relpath(abs_path, cwd)
+                display_path = rel_path
+            else:
+                display_path = file_path
+
+        display_args["id"] = display_path
+        del display_args["cursor"]
+
     def _execute_tool_call(self, last_message, tool_instances):
         """Execute a single tool call and return result messages"""
         # Extract tool call information from harmony message
@@ -668,7 +614,13 @@ class DropletAgent:
             if not content_text or not content_text.strip():
                 function_args = {}
             else:
-                function_args = json.loads(content_text)
+                parsed = json.loads(content_text)
+                # Check if this is a tool call structure with "name" and "arguments"
+                # (Granite format) vs just arguments (Harmony format)
+                if isinstance(parsed, dict) and "name" in parsed and "arguments" in parsed:
+                    function_args = parsed["arguments"]
+                else:
+                    function_args = parsed
 
         # Format and display tool call with tool class name
         if is_direct_content_tool:
@@ -676,7 +628,10 @@ class DropletAgent:
             content_preview = content_text[:50] + "..." if len(content_text) > 50 else content_text
             args_str = f"script='{content_preview}'"
         else:
-            args_str = ", ".join(f"{k}={repr(v)}" for k, v in function_args.items())
+            # Build display args, replacing cursor with URL when available
+            display_args = dict(function_args)
+            self._replace_cursor_with_url_in_display_args(recipient, display_args, tool_instances)
+            args_str = ", ".join(f"{k}={repr(v)}" for k, v in display_args.items())
 
         if recipient in tool_instances:
             tool_class_name = tool_instances[recipient].__class__.__name__
@@ -767,7 +722,7 @@ class DropletAgent:
 
             # Count tokens in tool result
             result_text = result_messages[0].content[0].text if result_messages else ""
-            result_tokens = len(self.encoding.encode(result_text, allowed_special='all'))
+            result_tokens = self.converter.count_tokens(result_text)
 
             # Check if result contains an error
             is_error = False
@@ -807,103 +762,92 @@ class DropletAgent:
         # grow conversation over one or more necessary tool calls
         for iteration in range(max_iterations):
 
-            start_llm_time = time.time()
+            # Pre-compute prompt for validation and debug
+            prompt_string = self.converter.messages_to_prompt_string(self.conversation_history)
+            prompt_token_count = self.converter.count_tokens(prompt_string)
 
-            # Operate at string level
-            prompt_string = self.harmony.messages_to_prompt_string(self.conversation_history)
-
-            # Count actual tokens from the prompt string that will be sent
-            # Allow all special tokens since harmony uses them for markup
-            prompt_token_count = len(self.encoding.encode(prompt_string, allowed_special='all'))
-
+            # Validate context size
             if prompt_token_count > self.max_context_tokens:
                 raise RuntimeError(
-                    f"Max number of tokens exceeded {self._format_tokens(prompt_token_count)} "
+                    f"Conversation too long: {self._format_tokens(prompt_token_count)} tokens "
                     f"(max: {self._format_tokens(self.max_context_tokens)}). "
                 )
 
-            # If debug mode, show the full prompt with highlighted markup
+            # Debug print if enabled
             if self.debug:
-                debug_print_prompt(prompt_string)
+                self.converter.debug_print_prompt(prompt_string)
 
-            # Print model call info
             blue_print(f"🤖 {prompt_token_count} tokens input to {self.model}")
 
-            # Retry generation if harmony parsing fails (model may generate incorrect format occasionally)
+            # Generation with retry loop for HarmonyError
             max_retries = 20
-
             for attempt in range(1, max_retries + 1):
-                # Use backend to generate completion
                 try:
-                    result = self.backend.generate(
-                        prompt=prompt_string,
+                    result = self.orchestrator.generate_messages(
+                        messages=self.conversation_history,
                         model=self.model,
                         options=self.options,
                         timeout=300
                     )
-                except requests.exceptions.HTTPError as e:
-                    error_msg = f"Backend HTTP error: {e}"
-                    if hasattr(e, 'response') and e.response is not None:
-                        status_code = e.response.status_code
-                        if status_code == 500:
-                            error_msg = (
-                                f"Backend server error (500). This may be due to:\n"
-                                f"  • Large context size (current: {self._format_tokens(prompt_token_count)} tokens)\n"
-                                f"  • Model out of memory\n"
-                                f"  • Backend server issue\n"
-                                f"Try reducing tool output size or restarting the backend."
-                            )
-                            print(f"\n\033[91m✗ Error: {error_msg}\033[0m\n")
-                            self._save_conversation_log()
-                            self._save_out_messages()
-                            raise Backend500Error(error_msg)
-                        else:
-                            error_msg = f"Backend returned status {status_code}: {e.response.text[:200]}"
+
+                    # Success - add messages to history
+                    self.conversation_history.extend(result.messages)
+                    response_length = result.response_token_count
+                    elapsed_time = result.elapsed_time
+                    break
+
+                except Backend500Error as e:
+                    # Backend server error - format with context
+                    error_msg = (
+                        f"Backend server error (500). This may be due to:\n"
+                        f"  • Large context size (current: {self._format_tokens(e.prompt_token_count)} tokens)\n"
+                        f"  • Model out of memory\n"
+                        f"  • Backend server issue\n"
+                        f"Try reducing tool output size or restarting the backend."
+                    )
+                    print(f"\n\033[91m✗ Error: {error_msg}\033[0m\n")
+                    self._save_conversation_log()
+                    self._save_out_messages()
+                    raise Backend500Error(error_msg, e.prompt_token_count)
+
+                except BackendHTTPError as e:
+                    # Other HTTP errors
+                    error_msg = f"Backend returned status {e.status_code}: {e.response_text}"
                     print(f"\n\033[91m✗ Error: {error_msg}\033[0m\n")
                     self._save_conversation_log()
                     self._save_out_messages()
                     return "I encountered a backend error and cannot continue. Please check the backend status."
-                except requests.exceptions.RequestException as e:
-                    error_msg = f"Backend connection error: {e}"
+
+                except BackendConnectionError as e:
+                    # Connection failures
+                    error_msg = str(e)
                     print(f"\n\033[91m✗ Error: {error_msg}\033[0m\n")
                     self._save_conversation_log()
                     self._save_out_messages()
                     return "I cannot connect to the backend. Please check if the backend is running."
-                except Exception as e:
-                    error_msg = f"Unexpected error during generation: {e}"
+
+                except GenerationError as e:
+                    # Unexpected generation errors
+                    error_msg = str(e)
                     print(f"\n\033[91m✗ Error: {error_msg}\033[0m\n")
                     self._save_conversation_log()
                     self._save_out_messages()
                     return "I encountered an unexpected error and cannot continue."
 
-                elapsed_time = time.time() - start_llm_time
-
-                # parse string
-                if "context" in result:
-                    # ollama using dummy template
-                    response_tokens = result["context"][prompt_token_count:]
-                else:
-                    # ollama using raw
-                    response_tokens = self.encoding.encode(result["response"], allowed_special='all')
-
-                # Try to parse the response with harmony
-                try:
-                    parsed_messages = self.harmony.tokens_to_messages(response_tokens)
-                    self.conversation_history.extend(parsed_messages)
-                    break
                 except HarmonyError as he:
+                    # Parsing error - retry if attempts remain
                     if attempt < max_retries:
-                        print(f"\n\033[93m⚠ Harmony parse error on attempt {attempt}/{max_retries}, retrying generation...\033[0m")
+                        print(f"\n\033[93m⚠ Parse error on attempt {attempt}/{max_retries}, retrying generation...\033[0m")
                         print(f"   Error: {str(he)[:100]}")
                         continue
-                    print(f"\n\033[91m✗ Failed to generate valid harmony format after {max_retries} attempts\033[0m")
+                    # Max retries exceeded
+                    print(f"\n\033[91m✗ Failed to generate valid format after {max_retries} attempts\033[0m")
                     print(f"   Last error: {str(he)}")
                     self._save_conversation_log()
                     self._save_out_messages()
                     raise
 
-            # inform user
-            blue_print(f"└── {elapsed_time:.1f}s | ~{len(response_tokens)} tokens generated")
+            blue_print(f"└── {elapsed_time:.1f}s | ~{response_length} tokens generated")
 
             last_message = self.conversation_history[-1]
 

@@ -4,11 +4,11 @@ import time
 from typing import AsyncIterator
 
 from aiohttp import ClientSession
-from gpt_oss.tools.simple_browser.backend import BackendError, VIEW_SOURCE_PREFIX
+from gpt_oss.tools.simple_browser.backend import (VIEW_SOURCE_PREFIX,
+                                                  BackendError)
 from gpt_oss.tools.simple_browser.page_contents import process_html
-from gpt_oss.tools.simple_browser.simple_browser_tool import (
-    SimpleBrowserTool)
-from openai_harmony import (Message, ToolNamespaceConfig)
+from gpt_oss.tools.simple_browser.simple_browser_tool import SimpleBrowserTool
+from openai_harmony import Message, ToolNamespaceConfig
 
 logger = logging.getLogger(__name__)
 
