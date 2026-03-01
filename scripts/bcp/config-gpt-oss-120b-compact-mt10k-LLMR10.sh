@@ -18,4 +18,7 @@ RUN_DROPLET_BCP_EVAL_ARGS=(
     --no-droplet-system-prompt
     --developer-prompt "$DEVELOPER_PROMPT"
     --loop-tool-fail "$LOOP_TOOL_FAIL"
+    --context-compaction-method llm
+    --context-compaction-threshold 64000
+    --max-context-compactions 10
 )

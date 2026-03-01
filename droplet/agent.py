@@ -131,6 +131,7 @@ class DropletAgent:
         context_compaction_method=None,
         context_compaction_threshold=64000,
         max_context_compactions=3,
+        compaction_keep_n=5,
     ):
         """
         Initialize the agent
@@ -160,9 +161,10 @@ class DropletAgent:
             temperature: Sampling temperature (default: 0.0)
             max_tokens: Maximum tokens to generate (default: 32768)
             max_iterations: Maximum tool call iterations per user input (default: 10)
-            context_compaction_method: Method name ("keep_last_n" or "llm_keep_last_n"); None disables
+            context_compaction_method: Method name ("keep_last_n", "llm_keep_last_n", or "llm"); None disables
             context_compaction_threshold: Token count threshold to trigger compaction (default: 64000)
             max_context_compactions: Max times compaction can fire per user_input() call (default: 3)
+            compaction_keep_n: Number of recent messages to keep after compaction, must be >= 1 (default: 5)
         """
         # Initialize backend based on type
         if backend_type == "ollama":
@@ -204,6 +206,9 @@ class DropletAgent:
         self.context_compaction_method = context_compaction_method
         self.context_compaction_threshold = context_compaction_threshold
         self.max_context_compactions = max_context_compactions
+        if compaction_keep_n < 1:
+            raise ValueError(f"compaction_keep_n must be >= 1, got {compaction_keep_n}")
+        self.compaction_keep_n = compaction_keep_n
 
         # Initialize state
         self.state = {}
@@ -768,14 +773,12 @@ class DropletAgent:
     _COMPACTION_METHODS = {
         "keep_last_n": "_compact_keep_last_n",
         "llm_keep_last_n": "_compact_llm_keep_last_n",
+        "llm": "_compact_llm",
     }
-
-    # Number of recent conversation messages to retain after compaction
-    COMPACTION_KEEP_N = 5
 
     def _compact_keep_last_n(self, messages, original_question):
         """Keep system prefix, the original question, and last N conversation messages."""
-        n = self.COMPACTION_KEEP_N
+        n = self.compaction_keep_n
         prefix = messages[:self._num_system_messages]
         conversation_msgs = messages[self._num_system_messages:]
 
@@ -788,19 +791,8 @@ class DropletAgent:
 
         return prefix + [question_msg] + conversation_msgs[-n:]
 
-    def _compact_llm_keep_last_n(self, messages, original_question):
-        """Compact older messages with LLM, keep last N verbatim."""
-        n = self.COMPACTION_KEEP_N
-        prefix = messages[:self._num_system_messages]
-        conversation_msgs = messages[self._num_system_messages:]
-
-        if len(conversation_msgs) <= n:
-            return prefix + [Message.from_role_and_content(Role.USER, original_question)] + conversation_msgs
-
-        msgs_to_compact = conversation_msgs[:-n]
-        last_n = conversation_msgs[-n:]
-
-        # Build context text from older messages
+    def _llm_summarize(self, msgs_to_compact, original_question):
+        """Compact a list of messages using the LLM and return a compact Message."""
         context_lines = []
         for msg in msgs_to_compact:
             role = msg.author.role.name
@@ -826,7 +818,6 @@ class DropletAgent:
             Message.from_role_and_content(Role.USER, summary_prompt),
         ]
 
-        # Use the orchestrator (model-independent) to generate the summary
         result = self.orchestrator.generate_messages(
             messages=summary_messages,
             model=self.model,
@@ -839,11 +830,33 @@ class DropletAgent:
             if msg.author.role == Role.ASSISTANT and msg.content:
                 summary_text += msg.content[0].text
 
-        summary_msg = Message.from_role_and_content(
+        return Message.from_role_and_content(
             Role.USER,
             f"[CONTEXT SUMMARY]\n{summary_text}\n\nContinue the research for: {original_question}",
         )
-        return prefix + [summary_msg] + last_n
+
+    def _compact_llm_keep_last_n(self, messages, original_question):
+        """Compact older messages with LLM, keep last N verbatim."""
+        n = self.compaction_keep_n
+        prefix = messages[:self._num_system_messages]
+        conversation_msgs = messages[self._num_system_messages:]
+
+        if len(conversation_msgs) <= n:
+            return prefix + [Message.from_role_and_content(Role.USER, original_question)] + conversation_msgs
+
+        summary_msg = self._llm_summarize(conversation_msgs[:-n], original_question)
+        return prefix + [summary_msg] + conversation_msgs[-n:]
+
+    def _compact_llm(self, messages, original_question):
+        """Summarize all conversation messages with LLM."""
+        prefix = messages[:self._num_system_messages]
+        conversation_msgs = messages[self._num_system_messages:]
+
+        if not conversation_msgs:
+            return prefix + [Message.from_role_and_content(Role.USER, original_question)]
+
+        summary_msg = self._llm_summarize(conversation_msgs, original_question)
+        return prefix + [summary_msg]
 
     def _compact_context(self, messages, original_question):
         """Dispatch to the configured compaction method."""

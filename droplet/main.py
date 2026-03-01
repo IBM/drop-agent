@@ -104,13 +104,15 @@ def build_agent_config():
 
     # Context compaction
     parser.add_argument('--context-compaction-method',
-                       choices=['keep_last_n', 'llm_keep_last_n'],
+                       choices=['keep_last_n', 'llm_keep_last_n', 'llm'],
                        default=None,
                        help='Context compaction method (default: None = disabled)')
     parser.add_argument('--context-compaction-threshold', type=int, default=64000,
                        help='Token threshold to trigger context compaction (default: 64000)')
     parser.add_argument('--max-context-compactions', type=int, default=3,
                        help='Max compaction rounds per user input (default: 3)')
+    parser.add_argument('--compaction-keep-n', type=int, default=5,
+                       help='Number of recent messages to keep after compaction, must be >= 1 (default: 5)')
 
     # Configuration management
     parser.add_argument('-c', '--load-config', type=str, metavar='NAME',
@@ -228,6 +230,7 @@ def build_agent_config():
         'context_compaction_method': args.context_compaction_method,
         'context_compaction_threshold': args.context_compaction_threshold,
         'max_context_compactions': args.max_context_compactions,
+        'compaction_keep_n': args.compaction_keep_n,
     }
 
     # Return cwd and no_initial_summary separately (not part of agent config)

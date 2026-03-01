@@ -8,7 +8,7 @@ RUN_DROPLET_BCP_EVAL_ARGS=(
     --input-prefix "Question: "
     --gpt-reasoning high
     --num_workers 16
-    --max_concurrency_per_worker 1
+    --max_concurrency_per_worker 2
     --backend-type vllm
     --model $GEN_MODEL
     --gpt-reasoning high
