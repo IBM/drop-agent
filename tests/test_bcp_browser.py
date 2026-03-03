@@ -40,7 +40,7 @@ original_argv = sys.argv
 sys.argv = [sys.argv[0]] + unknown_args
 
 # Build config from CLI args and saved configs, then override for test
-config, _, _, _, _ = build_agent_config()
+config, _, _, _ = build_agent_config()
 
 # Restore original argv
 sys.argv = original_argv

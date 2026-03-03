@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "droplet"
-version = "0.1.2"
+version = "0.1.0"
 description = "DROP: Deep Research On Premise Agent"
 readme = "README.md"
 requires-python = ">=3.12"

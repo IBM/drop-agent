@@ -11,4 +11,5 @@ cenv/
 set_environment.sh
 #
 GPT-OSS-BrowseCompPlus-Eval/
-drop-agent.wiki/
+results/
+drop-agent.wiki

@@ -214,7 +214,7 @@ Examples:
     sys.argv = [sys.argv[0]] + unknown_args
 
     # Build agent config using droplet's standard config builder
-    agent_config, backend_name, _, _, _ = build_agent_config()
+    agent_config, backend_name, _, _ = build_agent_config()
 
     # Restore original argv
     sys.argv = original_argv

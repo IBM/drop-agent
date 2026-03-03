@@ -5,7 +5,7 @@ from droplet.agent import DropletAgent
 from droplet.main import build_agent_config
 
 # Build config from CLI args and saved configs
-config, _, _, _, _ = build_agent_config()
+config, _, _, _ = build_agent_config()
 if config is None:
     print("Special flag handled, exiting test")
     exit(0)

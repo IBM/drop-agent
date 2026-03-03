@@ -20,7 +20,7 @@ def build_agent_config():
     Parse command line arguments, load config, and return a dict ready for DropletAgent(**config).
 
     Returns:
-        tuple: (agent_config_dict, backend_name_for_display, initial_input, cwd, no_initial_summary) or (None, None, None, None, None) if should exit
+        tuple: (agent_config_dict, backend_name_for_display, initial_input, cwd) or (None, None, None, None) if should exit
     """
     # Discover all *Tool classes from droplet.tools
     excluded_tools = {'SimpleFunctionTool', 'BrowseTool'}
@@ -48,7 +48,7 @@ def build_agent_config():
     parser.add_argument('--semantic-scholar-api-key', type=str,
                        help='Semantic Scholar API key (optional, provides higher rate limits)')
     parser.add_argument('-t', '--tools', type=str, nargs='+',
-                       default=['FileBrowserTool', 'SemanticScholarTool', 'PythonTool'],
+                       default=['FileBrowserTool', 'SemanticScholarTool', 'PythonTool', 'WikipediaBrowserTool'],
                        help=f'Tools to use (default: FileBrowserTool, WikipediaBrowserTool, SemanticScholarTool, PythonTool). '
                             f'Available: {", ".join(sorted(available_tools.keys()))}')
 
@@ -65,9 +65,7 @@ def build_agent_config():
     parser.add_argument('--log', type=str, help='Path to JSON file to log conversation history')
     parser.add_argument('--out-messages', type=str, help='Path to JSON file to write final message list (for batch evaluation)')
     parser.add_argument('-i', '--input', type=str, dest='initial_input',
-                       help='Initial prompt to send to the agent (replaces default directory summary)')
-    parser.add_argument('--no-initial-summary', action='store_true',
-                       help='Skip the default initial directory summary and go directly to user input')
+                       help='Initial prompt to send to the agent')
     parser.add_argument('--require-approval', type=str, nargs='*',
                        default=['WikipediaBrowserTool', 'PythonTool'],
                        help='Tools that require user approval before execution (default: WikipediaBrowserTool, PythonTool)')
@@ -93,8 +91,6 @@ def build_agent_config():
                        help='Custom system prompt (only used when --no-droplet-system-prompt is set)')
     parser.add_argument('--developer-prompt', type=str,
                        help='Additional developer instructions added as developer message')
-    parser.add_argument('--initial-prompt', type=str,
-                       help='Override default initial prompt')
     parser.add_argument('--loop-tool-fail', type=str,
                        help='Override default loop failure message')
     parser.add_argument('--input-prefix', type=str,
@@ -180,7 +176,7 @@ def build_agent_config():
     # Handle --rits-list-models flag
     if args.rits_list_models:
         list_rits_models_and_exit(args)
-        return None, None, None, None, None
+        return None, None, None, None
 
     # Determine backend name for logo display
     if args.backend_type == "rits-vllm":
@@ -220,7 +216,6 @@ def build_agent_config():
         'no_droplet_sytem_prompt': args.no_droplet_system_prompt,
         'system_prompt': args.system_prompt,
         'developer_prompt': args.developer_prompt,
-        'initial_prompt': args.initial_prompt,
         'loop_tool_fail': args.loop_tool_fail,
         'input_prefix': args.input_prefix,
         'gpt_reasoning': args.gpt_reasoning,
@@ -233,14 +228,14 @@ def build_agent_config():
         'compaction_keep_n': args.compaction_keep_n,
     }
 
-    # Return cwd and no_initial_summary separately (not part of agent config)
-    return agent_config, backend_name, args.initial_input, args.cwd, args.no_initial_summary
+    # Return cwd separately (not part of agent config)
+    return agent_config, backend_name, args.initial_input, args.cwd
 
 
 def main():
     """Droplet entrypoint - initializes backend (Ollama or vLLM) and agent"""
     # Build consolidated agent configuration
-    agent_config, backend_name, initial_input, cwd, no_initial_summary = build_agent_config()
+    agent_config, backend_name, initial_input, cwd = build_agent_config()
 
     # If None returned, special flag was handled (--list-configs, --rits-list-models)
     if agent_config is None:
@@ -273,6 +268,9 @@ def main():
         # Print logo first, then initialize agent
         print_logo(model=agent_config['model'], backend=backend_name, tools=agent_config['tool_names'])
         print()
+
+        # Print helpful message in grey
+        print("\033[90mYou can ask DROP to summarize current folder or look for specific information using the tools above. You can use '!' to run a conventional command line that DROP does not see e.g. !ls\033[0m\n")
 
         # initial_input already extracted from build_agent_config() return value
         # (it's not in agent_config dict)
@@ -315,14 +313,9 @@ def main():
             return
 
         with agent:
-            # Handle initial prompt based on flags
-            if not no_initial_summary:
-                if initial_input:
-                    # Use custom input if provided
-                    response = agent.user_input(initial_input)
-                else:
-                    # Use default initial prompt
-                    response = agent.user_input(agent.INITIAL_PROMPT)
+            # Handle initial prompt if provided
+            if initial_input:
+                response = agent.user_input(initial_input)
                 droplet_print(response)
 
             # Simple interactive loop

@@ -83,12 +83,6 @@ class DropletAgent:
     """
 
     # Class-level prompt constants
-    INITIAL_PROMPT = (
-        "Please list the contents of the current directory and provide a summary of what you find. Avoid the use of "
-        "tables. Finally ask the user they have any question about this content and propose some possible questions. "
-        "Number the options."
-    )
-
     LOOP_TOOL_FAIL = (
         "I couldn't find what you were looking for after several attempts. Can you rephrase your question or provide "
         "more details about what you need?"
@@ -119,7 +113,6 @@ class DropletAgent:
         no_droplet_sytem_prompt=False,
         system_prompt=None,
         developer_prompt=None,
-        initial_prompt=None,
         loop_tool_fail=None,
         input_prefix=None,
         gpt_reasoning=None,
@@ -154,7 +147,6 @@ class DropletAgent:
             no_droplet_sytem_prompt: Disable default Droplet system prompt (default: False)
             system_prompt: Override system prompt (used if no_droplet_sytem_prompt=True)
             developer_prompt: Additional developer instructions added as developer message
-            initial_prompt: Override default initial prompt (default: class-level INITIAL_PROMPT)
             loop_tool_fail: Override default loop failure message (default: class-level LOOP_TOOL_FAIL)
             input_prefix: Prefix to add to user input messages (e.g., "Question: ") (default: None)
             gpt_reasoning: GPT-OSS reasoning effort level: "low", "medium", or "high" (default: None, uses model default)
@@ -239,11 +231,6 @@ class DropletAgent:
             self.SYSTEM_PROMPT = system_prompt
 
         # Set instance-level prompts (use class defaults if not provided)
-        if initial_prompt is not None:
-            self.INITIAL_PROMPT = initial_prompt
-        else:
-            self.INITIAL_PROMPT = DropletAgent.INITIAL_PROMPT
-
         if loop_tool_fail is not None:
             self.LOOP_TOOL_FAIL = loop_tool_fail
         else:
@@ -639,6 +626,10 @@ class DropletAgent:
                 # (Granite format) vs just arguments (Harmony format)
                 if isinstance(parsed, dict) and "name" in parsed and "arguments" in parsed:
                     function_args = parsed["arguments"]
+                    # fallback for scaped json
+                    if not isinstance(function_args, dict):
+                        function_args = json.loads(function_args)
+                        
                 else:
                     function_args = parsed
 

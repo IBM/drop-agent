@@ -8,7 +8,7 @@ from droplet.rich_terminal import droplet_print
 
 def test_read_file():
     # Build config from CLI args and saved configs, then override for test
-    config, _, _, _, _ = build_agent_config()
+    config, _, _, _ = build_agent_config()
     if config is None:
         print("Special flag handled, exiting test")
         return
